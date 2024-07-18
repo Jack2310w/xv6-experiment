@@ -16,12 +16,12 @@ int main()
     pid = getpid();
     char buf; // 用于接收管道数据
     // 关闭不需要的fd
-    close(p1[0]);
-    close(p2[1]);
+    close(p1[1]);
+    close(p2[0]);
     
-    read(p1[1], &buf, 1); // 读取父进程的数据
+    read(p1[0], &buf, 1); // 读取父进程的数据
     printf("%d: received ping\n", pid);
-    write(p2[0], &buf, 1); // 向父进程发送数据
+    write(p2[1], &buf, 1); // 向父进程发送数据
     
     exit(0);
   }
@@ -32,15 +32,13 @@ int main()
     char buf = 0; // 要传输的字节
     char rdbuf; // 读取的字节
     // 关闭不需要的fd
-    close(p1[1]);
-    close(p2[0]);
+    close(p1[0]);
+    close(p2[1]);
     
-    write(p1[0], &buf, 1); // 向子进程发送数据
-    wait(0);
-    read(p2[1], &rdbuf, 1); // 读取子进程传输的数据
+    write(p1[1], &buf, 1); // 向子进程发送数据
+    read(p2[0], &rdbuf, 1); // 读取子进程传输的数据
     printf("%d: received pong\n", pid);
     
     exit(0);
   }
 }
-

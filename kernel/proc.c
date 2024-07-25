@@ -311,6 +311,8 @@ fork(void)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
+  
+  np->trace_mask = p->trace_mask; // 复制trace信息
 
   release(&np->lock);
 

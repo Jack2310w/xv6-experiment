@@ -129,7 +129,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_trace]   sys_trace,
-// [SYS_sysinfo] sys_sysinfo,
+[SYS_sysinfo] sys_sysinfo,
 };
 
 // 系统调用与名称的数组
@@ -156,7 +156,7 @@ static const char* syscallName[] = {
 [SYS_mkdir]   "mkdir",
 [SYS_close]   "close",
 [SYS_trace]   "trace",
-// [SYS_sysinfo] "sysinfo",
+[SYS_sysinfo] "sysinfo",
 };
 
 void

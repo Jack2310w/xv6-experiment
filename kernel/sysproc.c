@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -97,5 +98,21 @@ uint64 sys_trace(void)
   int mask;
   argint(0, &mask);
   myproc()->trace_mask = mask; // 修改proc数据结构中的对应trace标签
+  return 0;
+}
+
+uint64 sys_sysinfo(void)
+{
+  // 获取用户空间参数
+  uint64 addr;
+  argaddr(0, &addr);
+  
+  struct sysinfo res;
+  res.freemem = get_freemem();
+  res.nproc = procnum();
+  if(copyout(myproc()->pagetable, addr, (char*)&res, sizeof(res)) < 0){
+    return -1;
+  }
+  
   return 0;
 }

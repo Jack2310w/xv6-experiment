@@ -131,6 +131,15 @@ found:
     release(&p->lock);
     return 0;
   }
+  
+  // 开辟一页存放usyscall结构体
+  struct usyscall* share_page = (struct usyscall*)kalloc();
+  if(share_page == 0)
+  {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -139,12 +148,23 @@ found:
     release(&p->lock);
     return 0;
   }
-
+  
+  // 映射usyscall结构体
+  if(mappages(p->pagetable, USYSCALL, PGSIZE, (uint64)share_page, PTE_W | PTE_R | PTE_U) < 0)
+  {
+    uvmunmap(p->pagetable, USYSCALL, 1, 0);
+    uvmfree(p->pagetable, 0);
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  share_page->pid = p->pid;
 
   return p;
 }
@@ -212,6 +232,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 

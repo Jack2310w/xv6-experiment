@@ -67,6 +67,7 @@ sys_sleep(void)
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+  backtrace();
   return 0;
 }
 
@@ -90,4 +91,32 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64 sys_sigalarm(void)
+{
+  int interval;      // 触发间隔
+  uint64 handler; // 指向handler的函数指针
+  // 从用户空间获取参数
+  argint(0, &interval);
+  argaddr(1, &handler);
+  
+  // 将参数复制到进程中
+  struct proc* p = myproc();
+  
+  p->alarmticks = interval;
+  p->alarmhandler = handler;
+  // p->alarmhandler = (void (*)())(handler);
+  // p->alarmhandler = (void (*)())(walkaddr(p->pagetable, handler));
+  
+  return 0;
+}
+
+uint64 sys_sigreturn(void)
+{
+  struct proc* p = myproc();
+  // 恢复执行状态
+  memmove((void*)p->trapframe, (void*)&p->prevframe, sizeof(p->prevframe));
+  p->hasreturn = 1;
+  return p->trapframe->a0;
 }

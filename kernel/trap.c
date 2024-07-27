@@ -67,6 +67,46 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+    
+    if(which_dev == 2 && p->alarmticks > 0){
+      // 判断时钟中断并进行处理
+      if(++(p->curtick) == p->alarmticks){
+        p->curtick = 0;
+        if(p->hasreturn){
+          p->hasreturn = 0;
+          // 保存执行状态
+          /*
+          p->prevframe.epc = p->trapframe->epc;
+          p->prevframe.ra = p->trapframe->ra;
+          p->prevframe.sp = p->trapframe->sp;
+          p->prevframe.t0 = p->trapframe->t0;
+          p->prevframe.t1 = p->trapframe->t1;
+          p->prevframe.t2 = p->trapframe->t2;
+          p->prevframe.t3 = p->trapframe->t3;
+          p->prevframe.t4 = p->trapframe->t4;
+          p->prevframe.t5 = p->trapframe->t5;
+          p->prevframe.t6 = p->trapframe->t6;
+          p->prevframe.a0 = p->trapframe->a0;
+          p->prevframe.s0 = p->trapframe->s0;
+          p->prevframe.s1 = p->trapframe->s1;
+          p->prevframe.s2 = p->trapframe->s2;
+          p->prevframe.s3 = p->trapframe->s3;
+          p->prevframe.s4 = p->trapframe->s4;
+          p->prevframe.s5 = p->trapframe->s5;
+          p->prevframe.s6 = p->trapframe->s6;
+          p->prevframe.s7 = p->trapframe->s7;
+          p->prevframe.s8 = p->trapframe->s8;
+          p->prevframe.s9 = p->trapframe->s9;
+          p->prevframe.s10 = p->trapframe->s10;
+          p->prevframe.s11 = p->trapframe->s11;
+          p->prevframe.tp = p->trapframe->tp;
+          */
+          memmove((void*)&p->prevframe, (void*)p->trapframe, sizeof(p->prevframe));
+          p->trapframe->epc = p->alarmhandler;
+        }
+      }
+    }
+    
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

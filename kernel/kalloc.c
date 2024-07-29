@@ -23,6 +23,13 @@ struct {
   struct run *freelist;
 } kmem;
 
+static int refcnt[(uint64)PHYSTOP / 4096];
+
+inline uint64 getrefpos(void* pa)
+{
+  return ((uint64)pa / 4096);
+}
+
 void
 kinit()
 {
@@ -51,6 +58,11 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  // 检查页面的ref数量，如果refcnt不为0则不释放
+  if(--refcnt[getrefpos(pa)] > 0){
+    return;
+  }
+
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -76,7 +88,49 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    refcnt[getrefpos(r)] = 1; // 初始化refcnt为1
+  }
+  
   return (void*)r;
+}
+
+// kref函数：将页面的被引用次数加1
+void kref(void* pa)
+{
+  refcnt[getrefpos(pa)]++;
+}
+
+// kgetref函数：获取页面的被引用次数
+int kgetref(void* pa)
+{
+  return refcnt[getrefpos(pa)];
+}
+
+int cow_handler(pagetable_t pagetable, pte_t* pte, uint64 va)
+{
+  uint64 pa = PTE2PA(*pte);
+  // 进行重新分配页面处理
+  char* mem;
+  // 分配新页面
+  if((mem = kalloc()) == 0){
+    printf("kalloc fail\n");
+    return -1;
+  }
+  uint flags = PTE_FLAGS(*pte);
+  flags = flags & ~PTE_C;
+  flags = flags | PTE_W;
+  memmove(mem, (char*)pa, PGSIZE);
+  if(kgetref((void*)pa) == 2){
+    *pte = *pte | PTE_W;
+    *pte = *pte & ~PTE_C;
+  }
+  uvmunmap(pagetable, va, 1, 1);  // 完成所有操作后才能unmap旧页面
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+    printf("mappage fail\n");
+    kfree((void*)mem);
+    return -1;
+  }
+  return 0;
 }

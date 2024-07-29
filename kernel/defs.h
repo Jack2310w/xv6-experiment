@@ -63,6 +63,9 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void            kref(void *);    // 将页面的被引用加1
+int             kgetref(void *); // 获取页面的被引用次数
+int             cow_handler(pagetable_t, pte_t*, uint64);
 
 // log.c
 void            initlog(int, struct superblock*);

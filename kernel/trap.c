@@ -67,10 +67,20 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p);
+  } 
+  else if(r_scause() == 15){
+    // 对COW问题进行处理
+    if(r_stval() >= MAXVA){
+      goto unknown;
+    }
+    uint64 targetpage = PGROUNDDOWN(r_stval());
+    pte_t* pte = walk(p->pagetable, targetpage, 0);
+    if((*pte & PTE_V) == 0 || (*pte & PTE_C) == 0 || cow_handler(p->pagetable, pte, targetpage) != 0){
+      goto unknown;
+    }
+  }
+  else {
+    goto unknown;
   }
 
   if(killed(p))
@@ -81,6 +91,12 @@ usertrap(void)
     yield();
 
   usertrapret();
+
+  unknown:
+    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    setkilled(p);
+    exit(-1);
 }
 
 //

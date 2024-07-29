@@ -315,15 +315,31 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+    
     pa = PTE2PA(*pte);
+    
+    // 记录原先的PTE_W状态并标记COW页面
+    // *pte = *pte | PTE_C;
+    if(*pte & PTE_W){
+      // *pte = *pte | PTE_O;
+      *pte = *pte & ~PTE_W; // 清除PTE_W标记
+      *pte = *pte | PTE_C;
+    }
+    // else{
+      // *pte = *pte & ~PTE_O;
+    // }
+    
+    
     flags = PTE_FLAGS(*pte);
+
+    /*
     if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
@@ -331,12 +347,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
+    */
+    
+    // 将old中的页面映射到new中的对应位置
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      return -1;
+    }
+    kref((void *)pa); // 增加被引用次数
   }
   return 0;
-
+/*
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+*/
 }
 
 // mark a PTE invalid for user access.
@@ -366,10 +390,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+    
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+       ((*pte & PTE_W) == 0 && (*pte & PTE_C) == 0))
       return -1;
     pa0 = PTE2PA(*pte);
+    
+    // 处理COW情况
+    if((*pte & PTE_W) == 0 && (*pte & PTE_C)){
+      if(cow_handler(pagetable, pte, va0) != 0){
+        return -1;
+      }
+      pte = walk(pagetable, va0, 0);
+      pa0 = PTE2PA(*pte);
+    }
+    
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -379,6 +414,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     src += n;
     dstva = va0 + PGSIZE;
   }
+  
   return 0;
 }
 

@@ -20,6 +20,7 @@ static struct mbuf *rx_mbufs[RX_RING_SIZE];
 static volatile uint32 *regs;
 
 struct spinlock e1000_lock;
+struct spinlock mylock;
 
 // called by pci_init().
 // xregs is the memory address at which the
@@ -30,6 +31,7 @@ e1000_init(uint32 *xregs)
   int i;
 
   initlock(&e1000_lock, "e1000");
+  initlock(&mylock, "mylock");
 
   regs = xregs;
 
@@ -90,8 +92,10 @@ e1000_init(uint32 *xregs)
   regs[E1000_RDTR] = 0; // interrupt after every received packet (no timer)
   regs[E1000_RADV] = 0; // interrupt after every packet (no timer)
   regs[E1000_IMS] = (1 << 7); // RXDW -- Receiver Descriptor Write Back
+  
 }
 
+/*
 int
 e1000_transmit(struct mbuf *m)
 {
@@ -102,7 +106,44 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
+
+  // acquire(&e1000_lock);
+  uint32 packetindex = regs[E1000_TDT]; // 获取要传输的包的位置
+  // release(&e1000_lock);
   
+  if((tx_ring[packetindex].status & E1000_TXD_STAT_DD) == 0){
+    // release(&e1000_lock);
+    return -1; // 检查前一个传输是否完成
+  }
+  // regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+  // release(&e1000_lock);
+  
+  // 释放之前的mbuf
+  
+  if(tx_mbufs[packetindex]){
+    mbuffree(tx_mbufs[packetindex]);
+  }
+  
+  tx_mbufs[packetindex] = m;
+  
+  // 设置tx_ring的内容
+  tx_ring[packetindex].addr = (uint64)(m->head);
+  tx_ring[packetindex].length = m->len;
+  tx_ring[packetindex].cso = 0;
+  // tx_ring[packetindex].cmd |= E1000_TXD_CMD_RS;  // 设置RS位
+  // tx_ring[packetindex].cmd |= E1000_TXD_CMD_EOP; // 设置EOP位
+  tx_ring[packetindex].cmd = (E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP);
+  
+  tx_ring[packetindex].status = 0;
+  tx_ring[packetindex].css = 0;
+  tx_ring[packetindex].special = 0;
+  
+  // 更新tail寄存器
+  // acquire(&e1000_lock);
+  regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+  // release(&e1000_lock);
+  // printf("transmit\n");
+
   return 0;
 }
 
@@ -115,7 +156,151 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+  
+  // printf("recv start\n");
+  
+  // acquire(&e1000_lock);
+
+  // if((regs[E1000_RDT] + 1) % RX_RING_SIZE == regs[E1000_RDH]){
+    // printf("test\n");
+  // }
+
+  // acquire(&e1000_lock);
+  // printf("recv start\n");
+
+  // uint32 packetindex = regs[E1000_RDT];
+  // release(&e1000_lock);
+
+  // if((rx_ring[packetindex].status & E1000_TXD_STAT_DD) == 0){
+    // release(&e1000_lock);
+    // printf("invalid pack\n");
+    // return; // 检查要读取的包是否有效
+  // }
+  // printf("valid pack\n");
+  
+  // regs[E1000_RDT] = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  // regs[E1000_RDT] = packetindex;
+  // release(&mylock);
+  // release(&e1000_lock);
+  uint32 packetindex = (regs[E1000_RDT] + 1) % RX_RING_SIZE; // 获取要读取的包的位置
+  
+  // 接收数据包
+  while(rx_ring[packetindex].status & E1000_RXD_STAT_DD){
+    
+    struct mbuf* target = rx_mbufs[packetindex];
+    // regs[E1000_ICR] = 0xffffffff;
+    // rx_mbufs[packetindex]->len = rx_ring[packetindex].length;
+    
+    // net_rx(rx_mbufs[packetindex]);
+    // mbuffree(rx_mbufs[packetindex]);
+    // release(&e1000_lock);
+    
+    // 更新tail寄存器
+    // acquire(&e1000_lock);
+    // regs[E1000_RDT] = (packetindex + 1) % RX_RING_SIZE;
+    // regs[E1000_RDT] = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    // regs[E1000_ICR] = 0xffffffff;
+    // release(&e1000_lock);
+    // printf("%d\n", regs[E1000_ICR]);
+    target->len = rx_ring[packetindex].length;
+    // release(&e1000_lock);
+    net_rx(target);
+    // acquire(&e1000_lock);
+    // regs[E1000_ICR] = 0xffffffff;
+    
+    // 替换一个新的mbuf
+    rx_mbufs[packetindex] = mbufalloc(0);
+    if (!rx_mbufs[packetindex])
+      panic("e1000_recv");
+    rx_ring[packetindex].addr = (uint64) rx_mbufs[packetindex]->head;
+    rx_ring[packetindex].status = 0; // 重置状态
+    
+    regs[E1000_RDT] = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    packetindex = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    // release(&e1000_lock);
+    // printf("recv end\n");
+  }
 }
+*/
+
+int
+e1000_transmit(struct mbuf *m)
+{
+  //
+  // Your code here.
+  //
+  // the mbuf contains an ethernet frame; program it into
+  // the TX descriptor ring so that the e1000 sends it. Stash
+  // a pointer so that it can be freed after sending.
+  //
+
+  acquire(&e1000_lock);
+  uint32 packetindex = regs[E1000_TDT] % TX_RING_SIZE; // 获取要传输的包的位置
+  
+  if((tx_ring[packetindex].status & E1000_TXD_STAT_DD) == 0){
+    release(&e1000_lock);
+    return -1; // 检查前一个传输是否完成
+  }
+  
+  // 释放之前的mbuf
+  
+  if(tx_mbufs[packetindex]){
+    mbuffree(tx_mbufs[packetindex]);
+  }
+  
+  tx_mbufs[packetindex] = m;
+  
+  // 设置tx_ring的内容
+  tx_ring[packetindex].addr = (uint64)(m->head);
+  tx_ring[packetindex].length = m->len;
+  tx_ring[packetindex].cso = 0;
+  tx_ring[packetindex].cmd = (E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP);
+  
+  tx_ring[packetindex].status = 0;
+  tx_ring[packetindex].css = 0;
+  tx_ring[packetindex].special = 0;
+  
+  // 更新tail寄存器
+  regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+  release(&e1000_lock);
+
+  return 0;
+}
+
+static void
+e1000_recv(void)
+{
+  //
+  // Your code here.
+  //
+  // Check for packets that have arrived from the e1000
+  // Create and deliver an mbuf for each packet (using net_rx()).
+  //
+
+  acquire(&e1000_lock);
+  uint32 packetindex = (regs[E1000_RDT] + 1) % RX_RING_SIZE; // 获取要读取的包的位置
+  release(&e1000_lock);
+  
+  // 接收数据包
+  while(rx_ring[packetindex].status & E1000_RXD_STAT_DD){
+    struct mbuf* target = rx_mbufs[packetindex];
+    target->len = rx_ring[packetindex].length;
+    net_rx(target);
+    
+    // 替换一个新的mbuf
+    rx_mbufs[packetindex] = mbufalloc(0);
+    if (!rx_mbufs[packetindex])
+      panic("e1000_recv");
+    rx_ring[packetindex].addr = (uint64) rx_mbufs[packetindex]->head;
+    rx_ring[packetindex].status = 0; // 重置状态
+    
+    acquire(&e1000_lock);
+    regs[E1000_RDT] = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    packetindex = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    release(&e1000_lock);
+  }
+}
+
 
 void
 e1000_intr(void)
@@ -123,7 +308,9 @@ e1000_intr(void)
   // tell the e1000 we've seen this interrupt;
   // without this the e1000 won't raise any
   // further interrupts.
-  regs[E1000_ICR] = 0xffffffff;
 
+  regs[E1000_ICR] = 0xffffffff;
+  
   e1000_recv();
+  
 }

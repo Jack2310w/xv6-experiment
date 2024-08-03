@@ -417,6 +417,51 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  uint tmp_bn;        // 记录临时bn
+  bn -= NINDIRECT;
+  // 处理二级寻址
+  if(bn < NINDIRECT * NINDIRECT){
+    // 第一次间接寻址
+    if((addr = ip->addrs[NDIRECT + 1]) == 0){
+      // 当前块（二级间接块）不存在，使用balloc分配
+      addr = balloc(ip->dev);
+      if(addr == 0){
+        return 0;
+      }
+      ip->addrs[NDIRECT + 1] = addr;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    tmp_bn = bn / NINDIRECT;
+    if((addr = a[tmp_bn]) == 0){
+      // 当前块（间接块）不存在，使用balloc分配
+      addr = balloc(ip->dev);
+      if(addr == 0){
+        brelse(bp);
+        return 0;
+      }
+      a[tmp_bn] = addr;
+      log_write(bp);
+    }
+    brelse(bp);
+    
+    // 第二次间接寻址
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    tmp_bn = bn % NINDIRECT;
+    if((addr = a[tmp_bn]) == 0){
+      // 当前块（文件块）不存在，使用balloc分配
+      addr = balloc(ip->dev);
+      if(addr){
+        a[tmp_bn] = addr;
+        log_write(bp);
+      }
+    }
+    brelse(bp);
+    return addr;
+  }
+  
+
   panic("bmap: out of range");
 }
 
@@ -446,6 +491,30 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+  
+  // 二级间接块的释放
+  struct buf* tmp_bp;
+  uint* tmp_a;
+  if(ip->addrs[NDIRECT + 1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint*)bp->data;
+    for(i = 0; i < NINDIRECT; i++){
+      if(a[i]){
+        tmp_bp = bread(ip->dev, a[i]);
+        tmp_a = (uint*)tmp_bp->data;
+        for(j = 0; j < NINDIRECT; j++){
+          if(tmp_a[j]){
+            bfree(ip->dev, tmp_a[j]);
+          }
+        }
+        brelse(tmp_bp);
+        bfree(ip->dev, a[i]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;

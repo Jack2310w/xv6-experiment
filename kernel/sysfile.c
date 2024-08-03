@@ -424,7 +424,6 @@ sys_open(void)
     iput(ip);
     end_op();
     if(ret < 0){
-      printf("read fail\n");
       return -1;
     }
     else{

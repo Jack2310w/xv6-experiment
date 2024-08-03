@@ -233,7 +233,7 @@ sys_unlink(void)
   iunlockput(ip);
 
   end_op();
-
+  
   return 0;
 
 bad:
@@ -301,6 +301,81 @@ create(char *path, short type, short major, short minor)
   return 0;
 }
 
+// 处理symlink打开操作的函数
+uint64 sym_open(int depth, char* path, int omode)
+{
+  if(depth >= 10){
+    return -1; // 嵌套层数过深
+  }
+  
+  struct inode* ip;
+  struct file *f;
+  int fd;
+  
+  begin_op();
+  if((ip = namei(path)) == 0){
+    end_op();
+    return -1;
+  }
+  ilock(ip);
+  if(ip->type == T_DIR && omode != O_RDONLY){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  
+  // 递归处理symlink的读取
+  if(ip->type == T_SYMLINK){
+    iunlock(ip);
+    char sympath[MAXPATH];
+    int ret = readi(ip, 0, (uint64)sympath, 0, MAXPATH);
+    iput(ip);
+    end_op();
+    if(ret < 0){
+      printf("read fail\n");
+      return -1;
+    }
+    else{
+      return sym_open(depth + 1, sympath, omode);
+    }
+  }
+  
+
+  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+    if(f)
+      fileclose(f);
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if(ip->type == T_DEVICE){
+    f->type = FD_DEVICE;
+    f->major = ip->major;
+  } else {
+    f->type = FD_INODE;
+    f->off = 0;
+  }
+  f->ip = ip;
+  f->readable = !(omode & O_WRONLY);
+  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+  
+  if((omode & O_TRUNC) && ip->type == T_FILE){
+    itrunc(ip);
+  }
+
+  iunlock(ip);
+  end_op();
+
+  return fd;
+}
+
 uint64
 sys_open(void)
 {
@@ -339,6 +414,22 @@ sys_open(void)
     iunlockput(ip);
     end_op();
     return -1;
+  }
+  
+  // 处理symlink的读取
+  if(!(omode & O_NOFOLLOW) && ip->type == T_SYMLINK){
+    iunlock(ip);
+    char sympath[MAXPATH];
+    int ret = readi(ip, 0, (uint64)sympath, 0, MAXPATH);
+    iput(ip);
+    end_op();
+    if(ret < 0){
+      printf("read fail\n");
+      return -1;
+    }
+    else{
+      return sym_open(1, sympath, omode);
+    }
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -502,4 +593,36 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64 sys_symlink(void)
+{
+  char path[MAXPATH];
+  uint64 target;
+  struct inode* ip;
+
+  // 获取用户参数
+  argaddr(0, &target);
+  if(argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+  // 在path位置调用create
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0){
+    end_op();
+    return -1;
+  }
+  
+  int ret = writei(ip, 1, target, 0, MAXPATH);
+  
+  iunlockput(ip);
+  end_op();
+
+  // printf("symlink: % %s %d\n", target, path, ret);
+  if(ret < 0){
+    return -1;
+  }
+  else{
+    return 0;
+  }
 }

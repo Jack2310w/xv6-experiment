@@ -31,6 +31,17 @@ barrier()
   // then increment bstate.round.
   //
   
+  pthread_mutex_lock(&bstate.barrier_mutex);
+  bstate.nthread++;
+  if(bstate.nthread < nthread){
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+  else{
+    pthread_cond_broadcast(&bstate.barrier_cond);
+    bstate.round++; // 更新round数
+    bstate.nthread = 0;
+  }
+  pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *

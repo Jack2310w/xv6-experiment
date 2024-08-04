@@ -145,6 +145,10 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  
+  for(int i = 0; i < VMASIZE; i++){
+    p->vmaarr[i].valid = 0;
+  }
 
   return p;
 }
@@ -295,6 +299,19 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  
+  // 复制vma数组
+  for(int i = 0; i < VMASIZE; i++){
+    if(p->vmaarr[i].valid){
+      memmove((char*)&np->vmaarr[i], (char*)&p->vmaarr[i], sizeof(p->vmaarr[i]));
+      filedup(np->vmaarr[i].f);
+      for(uint64 j = p->vmaarr[i].addr; j < p->vmaarr[i].addr + p->vmaarr[i].len; j += PGSIZE){
+        if(mappages(np->pagetable, j, PGSIZE, 0, PTE_U) != 0){
+          return -1;
+        }
+      }
+    }
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -357,6 +374,13 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+  
+  // 释放所有文件页面
+  for(int i = 0; i < 16; i++){
+    if(p->vmaarr[i].valid){
+      munmap(p->vmaarr[i].addr, p->vmaarr[i].len);
     }
   }
 

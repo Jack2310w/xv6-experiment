@@ -503,3 +503,202 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 sys_mmap(void)
+{
+  // 获取用户区参数
+  uint64 addr;
+  size_t len;
+  int prot, flags, fd;
+  int offset;
+  struct file* f;
+  argaddr(0, &addr);
+  argaddr(1, &len);  // 此处是为了获取uint64参数
+  argint(2, &prot);
+  argint(3, &flags);
+  argfd(4, &fd, &f);
+  argint(5, &offset);
+  
+  if(fd < 0 || f == 0){
+    return (uint64)-1;
+  }
+  
+  struct proc* p = myproc();
+  
+  if(addr == 0){
+    // 找到一个可用的虚拟地址
+    for(uint64 va = 0; va < MAXVA; va += PGSIZE){
+      if(walk(p->pagetable, va, 0) == 0){
+        addr = va;
+        break;
+      }
+    }
+  }
+  // printf("va = %p\n", addr);
+  
+  // 找到一个空闲的vma
+  for(int i = 0; i < VMASIZE; i++){
+    if(!p->vmaarr[i].valid){
+      // 申请页面
+      struct vma* target = &p->vmaarr[i]; 
+      target->pflags = PTE_U;
+      if(prot & PROT_READ){
+        if(!f->readable){
+          return (uint64)-1;
+        }
+        target->pflags |= PTE_R;
+      }
+      if(prot & PROT_WRITE){
+        if(!f->writable && !(flags & MAP_PRIVATE)){
+          return (uint64)-1;
+        }
+        target->pflags |= PTE_W;
+      }
+      if(prot & PROT_EXEC){
+        target->pflags |= PTE_X;
+      }
+      
+      // 映射页面
+      for(uint j = addr; j < addr + len; j += PGSIZE){
+        if(mappages(p->pagetable, j, PGSIZE, 0, PTE_U) < 0){
+          return (uint64)-1;
+        }
+      }
+      target->addr = addr;
+      target->len = len;
+      target->f = f;
+      target->fflags = flags;
+      filedup(f); // 增加f文件的引用数
+      target->valid = 1;
+      // printf("alloc %p %d\n", addr, len);
+      return addr;
+    }
+  }
+  // 没有空闲的vma，分配失败
+  return (uint64)-1;
+}
+
+/*
+void pg_writeback(struct file* f)
+{
+  if(f->type == FD_PIPE){
+      ret = pipewrite(f->pipe, addr, n);
+  }
+  else if(f->type == FD_DEVICE){
+    if(f->major < 0 || f->major >= NDEV || !devsw[f->major].write)
+      return -1;
+    ret = devsw[target->f->major].write(1, addr, n);
+  }
+  else if(f->type == FD_INODE){
+    begin_op();
+    ilock(f->ip);
+    if ((r = writei(f->ip, 1, addr + i, f->off, PGSIZE)) > 0)
+      f->off += r;
+      iunlock(f->ip);
+      end_op();
+    }
+    
+  }
+  else {
+    panic("pg_writeback");
+  }
+}
+*/
+
+uint64 munmap(uint64 addr, size_t len)
+{
+  struct proc* p = myproc();
+  // 找到需要unmap的块
+  struct vma* target = 0;
+  // printf("unmap %p %d\n", addr, len);
+  
+  for(int i = 0; i < VMASIZE; i++){
+    if(p->vmaarr[i].valid && addr >= p->vmaarr[i].addr 
+    && addr < p->vmaarr[i].addr + p->vmaarr[i].len){
+      target = &p->vmaarr[i];
+      break;
+    }
+  }
+  
+  if(target == 0){
+    return -1; // 没有找到对应页面
+  }
+  
+  pte_t* pte;
+  uint64 pa;
+  for(uint64 j = addr; j < addr + len; j += PGSIZE){
+    // 检查并执行写回操作
+    pte = walk(p->pagetable, j, 0);
+    if(pte == 0){
+      return -1;
+    }
+    pa = PTE2PA(*pte);
+    if(pa){
+      if((target->fflags & MAP_SHARED) && (*pte & PTE_D)){
+        filewrite(target->f, j, PGSIZE);
+      }
+      // printf("free %p %p\n", *pte, pa);
+      kfree((void*)pa);
+    }
+  }
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 0);
+  target->len -= len;
+  if(addr == target->addr){
+    target->addr = addr + len;
+  }
+  if(target->len == 0){
+    // 释放了整个段
+    fileclose(target->f);
+    target->valid = 0;
+  }
+
+  return 0;
+}
+
+uint64 sys_munmap(void)
+{
+  // 获取参数
+  uint64 addr;
+  size_t len;
+  argaddr(0, &addr);
+  argaddr(1, &len);  // 此处是为了获取uint64参数
+  return munmap(addr, len);
+}
+
+// 处理文件
+int handle_pgfread(uint64 va){
+  // 查找
+  struct proc* p = myproc();
+  for(int i = 0; i < VMASIZE; i++){
+    if(p->vmaarr[i].valid && va >= p->vmaarr[i].addr 
+    && va < p->vmaarr[i].addr + p->vmaarr[i].len){
+      // 分配空间
+      uint64 mem;
+      if((mem = (uint64)kalloc()) == 0){
+        // printf("kalloc fail\n");
+        return -1;
+      }
+      memset((char*)mem, 0, PGSIZE);
+      // printf("realloc %p %p\n", va, mem);
+      uvmunmap(p->pagetable, va, 1, 0);
+      
+      // 读取文件内容
+      ilock(p->vmaarr[i].f->ip);
+      int ret = readi(p->vmaarr[i].f->ip, 0, mem, va - p->vmaarr[i].addr, PGSIZE);
+      iunlock(p->vmaarr[i].f->ip);
+      if(ret < 0){
+        kfree((void*)mem);
+        return -1;
+      }
+      // printf("f-pflags: %d\n", p->vmaarr[i].pflags);
+      if(mappages(p->pagetable, va, PGSIZE, mem, p->vmaarr[i].pflags) < 0){
+        kfree((void*)mem);
+        return -1;
+      }
+      
+      return 0;
+    }
+  }
+  return -1;
+}
+

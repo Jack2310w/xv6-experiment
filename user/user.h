@@ -35,6 +35,10 @@ int pgaccess(void *base, int len, void *mask);
 int ugetpid(void);
 #endif
 
+// mmap和munmap的定义
+void* mmap(void* addr, size_t len, int prot, int flags, int fd, off_t offset);
+int munmap(void* addr, size_t len);
+
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
